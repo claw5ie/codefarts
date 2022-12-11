@@ -19,16 +19,11 @@ range_extraction(vector<int> args)
       if (i != j)
         {
           if (j - i == 1)
-            {
-              res.push_back(',');
-              res += to_string(args[j]);
-            }
+            res.push_back(',');
           else
-            {
-              res.push_back('-');
-              res += to_string(args[j]);
-            }
+            res.push_back('-');
 
+          res += to_string(args[j]);
           i = j;
         }
 
