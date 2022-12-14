@@ -11,6 +11,50 @@ typedef int64_t i64;
 typedef uint32_t u32;
 typedef int32_t i32;
 
+typedef struct ArrayHeader ArrayHeader;
+struct ArrayHeader
+{
+  size_t count;
+  size_t capacity;
+  size_t elem_size;
+};
+
+#define Array(T) T *
+#define array_header(arr) (((ArrayHeader *)(arr)) - 1)
+#define array_init(arr, capacity) arr = _array_init(capacity, sizeof(*arr))
+#define array_deinit(arr) free(array_header(arr));
+#define array_count(arr) array_header(arr)->count
+#define array_push(arr, elem) arr = _array_push(arr, &elem)
+
+void *
+_array_init(size_t capacity, size_t elem_size)
+{
+  ArrayHeader *h = malloc(sizeof(ArrayHeader) + capacity * elem_size);
+  h->count = 0;
+  h->capacity = capacity;
+  h->elem_size = elem_size;
+
+  return h + 1;
+}
+
+void *
+_array_push(void *array, const void *elem)
+{
+  ArrayHeader *h = array_header(array);
+
+  if (h->count >= h->capacity)
+    {
+      h->capacity = 2 * h->capacity + 1;
+      h = realloc(h, sizeof(ArrayHeader) + h->capacity * h->elem_size);
+      array = h + 1;
+    }
+
+  memcpy((char *)array + h->count * h->elem_size, elem, h->elem_size);
+  ++h->count;
+
+  return array;
+}
+
 typedef struct HashNode HashNode;
 struct HashNode
 {
@@ -151,12 +195,34 @@ enum AsmInstrType
   };
 typedef enum AsmInstrType AsmInstrType;
 
+enum AsmInstrArgType
+  {
+    Asm_Instr_Arg_Integer = 0x1,
+    Asm_Instr_Arg_Register = 0x2,
+    Asm_Instr_Arg_Label = 0x4,
+    Asm_Instr_Arg_String = 0x8,
+  };
+typedef enum AsmInstrArgType AsmInstrArgType;
+
+typedef struct AsmInstrInfo AsmInstrInfo;
+struct AsmInstrInfo
+{
+  AsmInstrType type;
+  size_t offset;
+};
+
+typedef struct AsmInstrArg AsmInstrArg;
+struct AsmInstrArg
+{
+  AsmInstrArgType type;
+  i64 value;
+};
+
 typedef struct Asm Asm;
 struct Asm
 {
-  i64 *instrs;
-  size_t count;
-  size_t capacity;
+  Array(AsmInstrInfo) instrs;
+  Array(AsmInstrArg) args;
 
   size_t last_unused_reg_id;
   size_t last_unused_label_id;
@@ -166,15 +232,19 @@ struct Asm
 };
 
 void
-push_asm_instr(Asm *ass, i64 value)
+push_asm_instr(Asm *ass, AsmInstrType type)
 {
-  if (ass->count >= ass->capacity)
-    {
-      ass->capacity = 2 * ass->capacity + 1;
-      ass->instrs = realloc(ass->instrs, ass->capacity * sizeof(*ass->instrs));
-    }
+  AsmInstrInfo info;
+  info.type = type;
+  info.offset = array_count(ass->args);
 
-  ass->instrs[ass->count++] = value;
+  array_push(ass->instrs, info);
+}
+
+void
+push_asm_arg(Asm *ass, AsmInstrArg arg)
+{
+  array_push(ass->args, arg);
 }
 
 void
@@ -197,33 +267,25 @@ skip_spaces_and_comments(const char **prog)
   *prog = at;
 }
 
-enum AsmInstrArgType
-  {
-    Asm_Instr_Arg_Integer = 0x1,
-    Asm_Instr_Arg_Register = 0x2,
-    Asm_Instr_Arg_Label = 0x4,
-    Asm_Instr_Arg_String = 0x8,
-  };
-typedef enum AsmInstrArgType AsmInstrArgType;
-
 void
 parse_asm_instr_arg(Asm *ass, u32 arg_types, const char **prog)
 {
   skip_spaces_and_comments(prog);
 
   const char *at = *prog;
+  AsmInstrArg arg;
 
   if (isdigit(*at))
     {
       assert((arg_types & Asm_Instr_Arg_Integer) && "integer is not expected for this command");
 
-      i64 value = 0;
+      arg.value = 0;
       do
-        value = 10 * value + (*at++ - '0');
+        arg.value = 10 * arg.value + (*at++ - '0');
       while (isdigit(*at));
 
-      push_asm_instr(ass, Asm_Instr_Arg_Integer);
-      push_asm_instr(ass, value);
+      arg.type = Asm_Instr_Arg_Integer;
+      push_asm_arg(ass, arg);
     }
   else if (isalpha(*at))
     {
@@ -231,26 +293,26 @@ parse_asm_instr_arg(Asm *ass, u32 arg_types, const char **prog)
       while (isalnum(at[count]))
         ++count;
 
-      HashResult result;
-
       if (arg_types & Asm_Instr_Arg_Register)
         {
-          result = hash_insert(&ass->regs, ass->last_unused_reg_id, at, count);
+          HashResult result = hash_insert(&ass->regs, ass->last_unused_reg_id, at, count);
           ass->last_unused_reg_id += result.was_inserted;
 
-          push_asm_instr(ass, Asm_Instr_Arg_Register);
+          arg.type = Asm_Instr_Arg_Register;
+          arg.value = result.id;
         }
       else if (arg_types & Asm_Instr_Arg_Label)
         {
-          result = hash_insert(&ass->labels, ass->last_unused_label_id, at, count);
+          HashResult result = hash_insert(&ass->labels, ass->last_unused_label_id, at, count);
           ass->last_unused_label_id += result.was_inserted;
 
-          push_asm_instr(ass, Asm_Instr_Arg_Label);
+          arg.type = Asm_Instr_Arg_Label;
+          arg.value = result.id;
         }
       else
         assert(false && "identifier is not expected for this instruction");
 
-      push_asm_instr(ass, result.id);
+      push_asm_arg(ass, arg);
 
       at += count;
     }
@@ -268,8 +330,7 @@ parse_asm_instr_arg(Asm *ass, u32 arg_types, const char **prog)
 
       // TODO.
 
-      push_asm_instr(ass, Asm_Instr_Arg_String);
-      push_asm_instr(ass, -1);
+      push_asm_arg(ass, (AsmInstrArg){ Asm_Instr_Arg_String, -1 });
     }
   else
     assert(false && "invalid register");
@@ -281,9 +342,8 @@ Asm
 parse_asm(const char *prog)
 {
   Asm ass;
-  ass.count = 0;
-  ass.capacity = 32;
-  ass.instrs = malloc(ass.capacity * sizeof(*ass.instrs));
+  array_init(ass.instrs, 32);
+  array_init(ass.args, 32);
 
   ass.last_unused_reg_id = 0;
   ass.last_unused_label_id = 0;
@@ -384,31 +444,8 @@ parse_asm(const char *prog)
           break;
         case Asm_Instr_Msg:
           {
-            // Get the location of the number of arguments of "msg"
-            // instruction to modify it after the number of arguments
-            // is known.
-            size_t arg_count_loc = ass.count;
-            size_t arg_count = 0;
-
-            push_asm_instr(&ass, 0);
-
-            for (bool first_iteration = true; ; first_iteration = false)
-              {
-                skip_spaces_and_comments(&prog);
-
-                if (!first_iteration)
-                  {
-                    assert(*prog == ',');
-                    ++prog;
-                  }
-
-                parse_asm_instr_arg(&ass,
-                                    Asm_Instr_Arg_Register | Asm_Instr_Arg_String,
-                                    &prog);
-                ++arg_count;
-              }
-
-            ass.instrs[arg_count_loc] = arg_count;
+            // TODO.
+            assert(false);
           }
 
           break;
@@ -425,6 +462,8 @@ parse_asm(const char *prog)
 int
 main(void)
 {
-  parse_asm("mov a, 2\n"
-            "inc a\n");
+  Asm ass = parse_asm("mov a, 2\n"
+                      "mov a, 4\n"
+                      "mov b, 5\n"
+                      "inc c\n");
 }
