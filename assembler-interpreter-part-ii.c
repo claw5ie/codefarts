@@ -93,6 +93,7 @@ hash_insert(HashTable *t, size_t id, const char *data, size_t count)
 
               HashNode *const next = node->next;
               node->next = new_table[ind];
+              new_table[ind] = node;
               node = next;
             }
         }
@@ -118,6 +119,7 @@ hash_insert(HashTable *t, size_t id, const char *data, size_t count)
   node->count = count;
   node->id = id;
   node->next = t->data[ind];
+  t->data[ind] = node;
 
   ++t->count;
 
