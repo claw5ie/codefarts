@@ -179,7 +179,6 @@ enum AsmInstrType
     Asm_Instr_Sub,
     Asm_Instr_Mul,
     Asm_Instr_Div,
-    Asm_Instr_Label,
     Asm_Instr_Jmp,
     Asm_Instr_Cmp,
     Asm_Instr_Jne,
@@ -371,7 +370,6 @@ parse_asm(const char *prog)
             { Asm_Instr_Sub, "sub", 3 },
             { Asm_Instr_Mul, "mul", 3 },
             { Asm_Instr_Div, "div", 3 },
-            { Asm_Instr_Label, "label", 5 },
             { Asm_Instr_Jmp, "jmp", 3 },
             { Asm_Instr_Cmp, "cmp", 3 },
             { Asm_Instr_Jne, "jne", 3 },
@@ -394,6 +392,18 @@ parse_asm(const char *prog)
               type = instrs[i].type;
               break;
             }
+        }
+
+      // If it isn't a label, fail later on switch.
+      if (type == -1 && isalpha(*prog))
+        {
+          parse_asm_instr_arg(&ass,
+                              Asm_Instr_Arg_Label,
+                              &prog);
+          assert(*prog == ':');
+          ++prog;
+
+          continue;
         }
 
       push_asm_instr(&ass, type);
@@ -420,13 +430,6 @@ parse_asm(const char *prog)
           parse_asm_instr_arg(&ass,
                               Asm_Instr_Arg_Register,
                               &prog);
-          break;
-        case Asm_Instr_Label:
-          parse_asm_instr_arg(&ass,
-                              Asm_Instr_Arg_Label,
-                              &prog);
-          assert(*prog == ':');
-          ++prog;
           break;
         case Asm_Instr_Jmp:
         case Asm_Instr_Jne:
@@ -465,5 +468,7 @@ main(void)
   Asm ass = parse_asm("mov a, 2\n"
                       "mov a, 4\n"
                       "mov b, 5\n"
+                      "label:\n"
+                      "label:\n"
                       "inc c\n");
 }
