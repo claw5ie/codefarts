@@ -18,10 +18,3 @@ contains
     res = nint(lower * 10)
   end function maxball
 end module solution
-
-program hello
-  use solution
-  integer :: n
-  n = maxball(15.0)
-  print *, n
-end program hello
